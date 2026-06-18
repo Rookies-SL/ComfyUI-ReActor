@@ -1,15 +1,6 @@
 import cv2
 import numpy as np
 from .face_objects import BaseONNXModel
-from .pose_warp import warp_face_to_target_landmarks
-
-HYPERSWAP_STD_LANDMARKS_256 = np.array([
-    [84.87, 105.94],
-    [171.13, 105.94],
-    [128.00, 146.66],
-    [96.95, 188.64],
-    [159.05, 188.64],
-], dtype=np.float32)
 
 class HyperSwapper(BaseONNXModel):
     """Класс для работы с моделями семейства Hyperswap"""
@@ -64,18 +55,7 @@ class HyperSwapper(BaseONNXModel):
         
         return mask
 
-    def _warp_face_to_target_landmarks(self, image, M, target_landmarks_5, source_landmarks_5, output_size, interpolation, border_value):
-        return warp_face_to_target_landmarks(
-            image,
-            M,
-            target_landmarks_5,
-            source_landmarks_5,
-            output_size,
-            interpolation,
-            border_value,
-        )
-
-    def paste_back(self, target_img, swapped_face, M, crop_size=256, target_landmarks_5=None, source_landmarks_5=None):
+    def paste_back(self, target_img, swapped_face, M, crop_size=256):
         
         # 1. Создание мягкой маски (Эрозия + Размытие)
         mask = self.create_gradient_mask(crop_size)
@@ -90,46 +70,26 @@ class HyperSwapper(BaseONNXModel):
         swapped_face_norm = swapped_face.astype(np.float32) / 255.0
         mask_norm = mask_3c.astype(np.float32)  # Маска уже [0,1]
 
-        if target_landmarks_5 is not None and source_landmarks_5 is not None:
-            warped_face = self._warp_face_to_target_landmarks(
-                swapped_face_norm,
-                M,
-                target_landmarks_5,
-                source_landmarks_5,
-                (h, w),
-                cv2.INTER_LANCZOS4,
-                0.5,
-            )
-            warped_mask = self._warp_face_to_target_landmarks(
-                mask_norm,
-                M,
-                target_landmarks_5,
-                source_landmarks_5,
-                (h, w),
-                cv2.INTER_CUBIC,
-                0.0,
-            )
-        else:
-            # 4. Обратное преобразование (WARP_INVERSE_MAP) для лица И маски
-            # Используем BORDER_CONSTANT с borderValue=0.5 (серый, чтобы избежать синих/зеленых артефактов)
-            warped_face = cv2.warpAffine(
-                swapped_face_norm,
-                M,
-                (w, h),
-                flags=cv2.INTER_LANCZOS4 | cv2.WARP_INVERSE_MAP,
-                borderMode=cv2.BORDER_CONSTANT,
-                borderValue=0.5
-            )
-            
-            # Для маски (INTER_CUBIC — плавные границы)
-            warped_mask = cv2.warpAffine(
-                mask_norm,
-                M,
-                (w, h),
-                flags=cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP,
-                borderMode=cv2.BORDER_CONSTANT,
-                borderValue=0.0  # Маска: 0 за пределами
-            )
+        # 4. Обратное преобразование (WARP_INVERSE_MAP) для лица И маски
+        # Используем BORDER_CONSTANT с borderValue=0.5 (серый, чтобы избежать синих/зеленых артефактов)
+        warped_face = cv2.warpAffine(
+            swapped_face_norm,
+            M,
+            (w, h),
+            flags=cv2.INTER_LANCZOS4 | cv2.WARP_INVERSE_MAP,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0.5
+        )
+        
+        # Для маски (INTER_CUBIC — плавные границы)
+        warped_mask = cv2.warpAffine(
+            mask_norm,
+            M,
+            (w, h),
+            flags=cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0.0  # Маска: 0 за пределами
+        )
         
         # 5. Обработка после warp: Clip, NaN fix
         warped_face = np.clip(warped_face, 0, 1)  # Убираем отрицательные
@@ -168,7 +128,13 @@ class HyperSwapper(BaseONNXModel):
             return img if paste_back else (None, None)
 
         # 3. Определение эталонных точек для выравнивания 256x256 (FFHQ Alignment)
-        std_landmarks_256 = HYPERSWAP_STD_LANDMARKS_256
+        std_landmarks_256 = np.array([
+            [ 84.87, 105.94],  # Левый глаз
+            [171.13, 105.94],  # Правый глаз
+            [128.00, 146.66],  # Кончик носа
+            [ 96.95, 188.64],  # Левый уголок рта
+            [159.05, 188.64]   # Правый уголок рта
+        ], dtype=np.float32)
 
         # Вычисляем аффинную матрицу
         M = self.get_affine_transform(target_landmarks_5.astype(np.float32), std_landmarks_256)
@@ -212,11 +178,4 @@ class HyperSwapper(BaseONNXModel):
             return output, M # Возвращаем только кроп лица (256x256) и матрицу M
         
         # Если нужна полная вклейка в исходное изображение:
-        return self.paste_back(
-            img,
-            output,
-            M,
-            crop_size=256,
-            target_landmarks_5=target_landmarks_5,
-            source_landmarks_5=std_landmarks_256,
-        )
+        return self.paste_back(img, output, M, crop_size=256)
