@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from .face_objects import BaseONNXModel
 from .meanshape_68 import MEANSHAPE_68
+from .pose_warp import warp_face_to_target_landmarks
 
 # --- Математика для 3D позы ---
 
@@ -322,13 +323,37 @@ class INSwapper(BaseONNXModel):
         fake_diff[:, :2] = 0
         fake_diff[:, -2:] = 0
 
-        IM = cv2.invertAffineTransform(M)
         img_white = np.full((aimg.shape[0], aimg.shape[1]), 255, dtype=np.float32)
 
-        # Возвращаем в исходную перспективу
-        bgr_fake_warped = cv2.warpAffine(bgr_fake, IM, (target_img.shape[1], target_img.shape[0]), borderValue=0.0)
-        img_white_warped = cv2.warpAffine(img_white, IM, (target_img.shape[1], target_img.shape[0]), borderValue=0.0)
-        fake_diff_warped = cv2.warpAffine(fake_diff, IM, (target_img.shape[1], target_img.shape[0]), borderValue=0.0)
+        # Возвращаем в исходную перспективу с привязкой глаз/носа/рта к целевым ключевым точкам
+        output_size = target_img.shape[:2]
+        bgr_fake_warped = warp_face_to_target_landmarks(
+            bgr_fake.astype(np.float32),
+            M,
+            target_face.kps,
+            src_pts,
+            output_size,
+            cv2.INTER_LINEAR,
+            0.0,
+        )
+        img_white_warped = warp_face_to_target_landmarks(
+            img_white,
+            M,
+            target_face.kps,
+            src_pts,
+            output_size,
+            cv2.INTER_LINEAR,
+            0.0,
+        )
+        fake_diff_warped = warp_face_to_target_landmarks(
+            fake_diff,
+            M,
+            target_face.kps,
+            src_pts,
+            output_size,
+            cv2.INTER_LINEAR,
+            0.0,
+        )
 
         img_white_warped[img_white_warped > 20] = 255
         fthresh = 10
