@@ -148,6 +148,7 @@ class reactor:
         return {
             "required": {
                 "enabled": ("BOOLEAN", {"default": True, "label_off": "OFF", "label_on": "ON"}),
+                "nsfw_check": ("BOOLEAN", {"default": True, "label_off": "OFF", "label_on": "ON"}),
                 "input_image": ("IMAGE",),
                 "swap_model": (list(model_names().keys()),),
                 "facedetection": (["retinaface_resnet50", "retinaface_mobile0.25", "YOLOv5l", "YOLOv5n"],),
@@ -415,7 +416,7 @@ class reactor:
         return result
 
 
-    def execute(self, enabled, input_image, swap_model, detect_gender_source, detect_gender_input, source_faces_index, input_faces_index, console_log_level, face_restore_model,face_restore_visibility, codeformer_weight, facedetection, source_image=None, face_model=None, faces_order=None, face_boost=None):
+    def execute(self, enabled, input_image, swap_model, detect_gender_source, detect_gender_input, source_faces_index, input_faces_index, console_log_level, face_restore_model,face_restore_visibility, codeformer_weight, facedetection, source_image=None, face_model=None, faces_order=None, face_boost=None, nsfw_check=True):
 
         device = model_management.get_torch_device()
 
@@ -449,23 +450,26 @@ class reactor:
         script = FaceSwapScript()
         pil_images = batch_tensor_to_pil(input_image)
 
-        # NSFW checker
-        logger.status("Checking for any unsafe content...")
-        pbar = progress_bar(len(pil_images))
-        pil_images_sfw = []
-        for img in pil_images:
-            if state.interrupted or model_management.processing_interrupted():
-                logger.status("Interrupted by User")
-                break
-            img_byte_arr = io.BytesIO()
-            img.save(img_byte_arr, format='PNG')
-            img_byte_arr = img_byte_arr.getvalue()
-            if not sfw.nsfw_image(img_byte_arr, NSFWDET_MODEL_PATH):
-                pil_images_sfw.append(img)
-            pbar.update(1)
-        pil_images = pil_images_sfw
-        # # #
-        progress_bar_reset(pbar)
+        if nsfw_check:
+            # NSFW checker
+            logger.status("Checking for any unsafe content...")
+            pbar = progress_bar(len(pil_images))
+            pil_images_sfw = []
+            for img in pil_images:
+                if state.interrupted or model_management.processing_interrupted():
+                    logger.status("Interrupted by User")
+                    break
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format='PNG')
+                img_byte_arr = img_byte_arr.getvalue()
+                if not sfw.nsfw_image(img_byte_arr, NSFWDET_MODEL_PATH):
+                    pil_images_sfw.append(img)
+                pbar.update(1)
+            pil_images = pil_images_sfw
+            # # #
+            progress_bar_reset(pbar)
+        else:
+            logger.status("NSFW check disabled by user")
 
         if len(pil_images) > 0:
 
@@ -554,6 +558,7 @@ class ReActorPlusOpt:
         self.input_faces_index = "0"
         self.source_faces_index = "0"
         self.console_log_level = 1
+        self.nsfw_check = True
         self.restore_swapped_only = True
         # self.face_size = 512
         self.face_boost_enabled = False
@@ -573,6 +578,7 @@ class ReActorPlusOpt:
             self.input_faces_index = options["input_faces_index"]
             self.source_faces_index = options["source_faces_index"]
             self.restore_swapped_only = options["restore_swapped_only"]
+            self.nsfw_check = options["nsfw_check"] if "nsfw_check" in options else True
 
         if face_boost is not None:
             self.face_boost_enabled = face_boost["enabled"]
@@ -581,7 +587,7 @@ class ReActorPlusOpt:
             self.face_boost_enabled = False
 
         result = reactor.execute(
-            self,enabled,input_image,swap_model,self.detect_gender_source,self.detect_gender_input,self.source_faces_index,self.input_faces_index,self.console_log_level,face_restore_model,face_restore_visibility,codeformer_weight,facedetection,source_image,face_model,self.faces_order, face_boost=face_boost
+            self,enabled,input_image,swap_model,self.detect_gender_source,self.detect_gender_input,self.source_faces_index,self.input_faces_index,self.console_log_level,face_restore_model,face_restore_visibility,codeformer_weight,facedetection,source_image,face_model,self.faces_order, face_boost=face_boost, nsfw_check=self.nsfw_check
         )
 
         return result
@@ -1601,6 +1607,7 @@ class ReActorOptions:
                 "source_faces_index": ("STRING", {"default": "0"}),
                 "detect_gender_source": (["no","female","male"], {"default": "no"}),
                 "console_log_level": ([0, 1, 2], {"default": 1}),
+                "nsfw_check": ("BOOLEAN", {"default": True, "label_off": "OFF", "label_on": "ON"}),
                 "restore_swapped_only": ("BOOLEAN", {"default": True, "label_off": "no", "label_on": "yes"})
             }
         }
@@ -1609,7 +1616,7 @@ class ReActorOptions:
     FUNCTION = "execute"
     CATEGORY = "🌌 ReActor"
 
-    def execute(self,input_faces_order, input_faces_index, detect_gender_input, source_faces_order, source_faces_index, detect_gender_source, console_log_level, restore_swapped_only):
+    def execute(self,input_faces_order, input_faces_index, detect_gender_input, source_faces_order, source_faces_index, detect_gender_source, console_log_level, restore_swapped_only, nsfw_check=True):
         options: dict = {
             "input_faces_order": input_faces_order,
             "input_faces_index": input_faces_index,
@@ -1618,6 +1625,7 @@ class ReActorOptions:
             "source_faces_index": source_faces_index,
             "detect_gender_source": detect_gender_source,
             "console_log_level": console_log_level,
+            "nsfw_check": nsfw_check,
             "restore_swapped_only": restore_swapped_only,
         }
         return (options, )
